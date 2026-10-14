@@ -110,6 +110,19 @@ const pluginManager = {
   },
   async installBundle (spec, options) {
     pluginCalls.push({ method: 'installBundle', spec, options })
+    // 真实服务对「同一个本地路径重复安装」的实际返回（pnpm 报 Already up to date）：
+    if (spec === '@local/already-there') {
+      return {
+        changed: false,
+        application: 'failed',
+        stage: 'install',
+        target: spec,
+        error: { code: 'ambiguous-install', diagnostic: 'pnpm 没有加入任何包' },
+        warnings: [],
+        pendingBuilds: [],
+        packageResult: { exitCode: 0, output: 'Already up to date', truncated: false, logPath: '/tmp/log' }
+      }
+    }
     return {
       changed: true,
       application: 'applied',
@@ -315,6 +328,11 @@ console.log('\n[5] dsh_plugin_install：预检拒绝 / 非 bundle 提示')
   check(notBundle.ok === true && notBundle.summary.includes('dsh.bundle.patch'), '非组合包给出提示但仍然安装')
   const skipped = await tool('dsh_plugin_install').execute({ spec: '@local/plain', preflight: false }, exec())
   check(skipped.ok === true, 'preflight=false 时跳过 inspect')
+  const ambiguous = await tool('dsh_plugin_install').execute({ spec: '@local/already-there', preflight: false }, exec())
+  console.log(ambiguous.summary.split('\n').map((line) => `    ${line}`).join('\n'))
+  check(ambiguous.ok === false && ambiguous.application === 'failed', '重装已有包时如实报告 failed（不吞掉失败）')
+  check(ambiguous.summary.includes('ambiguous-install'), '保留服务的原始错误码')
+  check(ambiguous.summary.includes('已经装过'), 'ambiguous-install 翻译成人话提示')
 }
 
 console.log('\n[6] dsh_plugin_manage：list / set_enabled / remove')

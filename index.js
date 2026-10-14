@@ -963,6 +963,7 @@ function pluginInstallTool (ctx, settings) {
         described.bundle ? `组合包：${described.bundle}` : null,
         described.warnings.length > 0 ? `警告：\n${described.warnings.map((entry) => `· ${entry}`).join('\n')}` : null,
         described.error ? `错误：${described.error.code}${described.error.diagnostic ? ` — ${described.error.diagnostic}` : ''}` : null,
+        hintFor(described.error?.code),
         described.pendingBuilds.length > 0
           ? `待批准的构建脚本：${described.pendingBuilds.join(', ')}（经用户在对话中明确批准后，用 approvedBuilds 重试）`
           : null,
@@ -1078,6 +1079,7 @@ function pluginManageTool (ctx, settings) {
           summary: [
             `removeBundle(${target}) → ${result.application ?? '未知结果'}`,
             result.error ? `错误：${result.error.code}${result.error.diagnostic ? ` — ${result.error.diagnostic}` : ''}` : null,
+            hintFor(result.error?.code),
             ...result.warnings.map((entry) => `警告：${entry}`)
           ].filter(Boolean).join('\n'),
           action,
@@ -1103,6 +1105,7 @@ function pluginManageTool (ctx, settings) {
             `${hasName ? 'setBundleEnabled' : 'setPluginEnabled'}(${target}, ${args.enabled}) → ${result.application ?? '未知结果'}`,
             result.application === 'restart-required' ? '该 profile 是启动型组合，重启后生效' : null,
             result.error ? `错误：${result.error.code}${result.error.diagnostic ? ` — ${result.error.diagnostic}` : ''}` : null,
+            hintFor(result.error?.code),
             ...result.warnings.map((entry) => `警告：${entry}`)
           ].filter(Boolean).join('\n'),
           action,
@@ -1133,6 +1136,32 @@ function outputEnvelope (extra) {
     },
     required: ['ok', 'summary']
   }
+}
+
+/**
+ * 管理服务错误码 → 一句能照做的提示。
+ *
+ * 这些码来自 `ManagementError`，多数情况下光看码名并不知道下一步该干嘛；
+ * 尤其是 `ambiguous-install`：它其实是「pnpm 没有新增任何依赖」，
+ * 最常见的原因是同一个 spec 已经装过了（实测：重装同一个本地路径就会撞上）。
+ */
+const MANAGEMENT_HINTS = {
+  'ambiguous-install': 'pnpm 没有新增任何依赖：这个 spec 大概率已经装过了（本地路径也可能没有新内容）。要改配置就改本包 cordis.patch.yml 里的 config，或在 profile 的 cordis.patch.yml 里加一条同 id 的覆盖行。',
+  'not-bundle': '这个包装上了但没有声明 dsh.bundle.patch，不会贡献任何插件行。',
+  'not-removable': '这是安装自带的组合包，只能改启用状态，不能卸载。',
+  'stop-profile': '仅启动型 profile 不能删除当前进程正在使用的包；停掉进程后用 dsh plugin 处理。',
+  'incompatible-version': '它声明的 DSH peer 与当前运行时不一致，会被拒绝加载；需要版本豁免（plugin_manager 的 set_version_exemption）。',
+  'stale-approval': '构建脚本的批准已过期，请重新确认 pendingBuilds 后再试。',
+  'bundle-in-use': '这个组合包的行仍被其他层占用，先处理那些覆盖再卸载。',
+  'management-required': '该对象由安装自带，管理器不能改动它。',
+  'invalid-spec': 'spec 形式不合法：只支持 registry 包名、绝对路径、git 地址或 tarball。',
+  'operation-error': '操作本身失败，看 packageResult 里的包管理器输出与日志路径。'
+}
+
+/** 取某个错误码的人话提示；没有对应项时返回 null（调用方 filter(Boolean) 掉即可）。 */
+function hintFor (code) {
+  const hint = typeof code === 'string' ? MANAGEMENT_HINTS[code] : undefined
+  return hint === undefined ? null : `提示：${hint}`
 }
 
 /** 把 ChangeResult 压成可读结构，避免把内部对象整包塞回模型。 */

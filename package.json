@@ -1,13 +1,23 @@
 {
-  "name": "@local/dsh-installer",
+  "name": "@hellogitd/dsh-installer",
   "version": "1.0.0",
-  "private": true,
+  "publishConfig": {
+    "access": "public"
+  },
   "description": "下载/安装 DeepSeek Harness CLI（@deepseek-ai/dsh），并按功能搜索、安装与管理当前 profile 的插件组合包",
   "license": "MIT",
-  "author": "dsh-installer contributors",
+  "author": "hellogitd",
   "type": "module",
   "icon": "./icon.svg",
   "main": "index.js",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/hellogitd/dsh_harness_install.git"
+  },
+  "homepage": "https://github.com/hellogitd/dsh_harness_install#readme",
+  "bugs": {
+    "url": "https://github.com/hellogitd/dsh_harness_install/issues"
+  },
   "meta": {
     "title": "DeepSeek Harness 安装器",
     "description": "从 npm registry 下载并安装 dsh CLI；按功能描述搜索可安装的插件（或看最火的一批），并安装、查看、启停与卸载插件组合包。"
@@ -33,6 +43,7 @@
   },
   "keywords": [
     "dsh",
+    "dsh-plugin",
     "deepseek-harness",
     "cordis",
     "plugin",

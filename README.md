@@ -1,4 +1,4 @@
-# DeepSeek Harness 安装器（`@local/dsh-installer`）
+# DeepSeek Harness 安装器（`@hellogitd/dsh-installer`）
 
 一个 DSH（DeepSeek Harness）Host 插件 bundle：**从 npm registry 下载/安装 dsh 命令行**，
 **按功能描述搜索可安装的插件**（也可以直接看最火的那批），并在**当前 profile** 里
@@ -10,7 +10,7 @@
 - 许可证：[MIT](./LICENSE)
 - 仓库：<https://github.com/hellogitd/dsh_harness_install>
 - 行 id：`dsh-installer`
-- 包名：`@local/dsh-installer`
+- 包名：`@hellogitd/dsh-installer`
 
 ---
 
@@ -72,7 +72,7 @@ plugin_manager { "action": "install_bundle", "target": "<克隆下来的绝对�
 `target` 是**本目录的绝对路径**。安装后：
 
 - 包被写进 profile 的 `package.json` `dependencies`（`link:` 指向本目录），
-  并追加到 `dsh.profile.bundles` 列表末尾；profile 目录下会出现 `node_modules/@local/dsh-installer`；
+  并追加到 `dsh.profile.bundles` 列表末尾；profile 目录下会出现 `node_modules/@hellogitd/dsh-installer`；
 - 真正的插件行由**本包自带的** `cordis.patch.yml` 在组合 profile 时插入，
   所以**不需要也不应该**手改 profile 的 `cordis.patch.yml`；
 - 四个工具立刻对使用该 profile 的所有会话生效（返回 `application: applied`）；
@@ -83,7 +83,7 @@ plugin_manager { "action": "install_bundle", "target": "<克隆下来的绝对�
 
 ```yaml
 - id: dsh-installer
-  name: "@local/dsh-installer"
+  name: "@hellogitd/dsh-installer"
   config:
     manager: pnpm
     registry: https://registry.npmmirror.com/
@@ -98,7 +98,7 @@ dsh plugin --profile <profile-name> add /absolute/path/to/dsh-installer
 卸载：
 
 ```text
-plugin_manager { "action": "remove_bundle", "target": "@local/dsh-installer" }
+plugin_manager { "action": "remove_bundle", "target": "@hellogitd/dsh-installer" }
 ```
 
 > 本插件只注册 Agent 工具，不注册任何 UI 槽位，也不会在启动时做网络或磁盘操作。
@@ -127,7 +127,7 @@ plugin_manager { "action": "remove_bundle", "target": "@local/dsh-installer" }
 ```yaml
 - insert:
     - id: dsh-installer
-      name: '@local/dsh-installer'
+      name: '@hellogitd/dsh-installer'
       config:
         manager: pnpm
         registry: https://registry.npmmirror.com/
@@ -203,7 +203,7 @@ node test/functional-test.mjs --install-e2e # 追加：真的用 npm 把 dsh 装
 | 项 | 结果 |
 |---|---|
 | `plugin_manager install_bundle` 安装本包 | `application: applied`，`changed: true`，`exitCode: 0` |
-| 插件行是否真的挂上 | `dsh_plugin_manage list` → `include:dsh-installer (@local/dsh-installer) [启用] active` |
+| 插件行是否真的挂上 | `dsh_plugin_manage list` → `include:dsh-installer (@hellogitd/dsh-installer) [启用] active` |
 | **`dsh_harness_install`（真实 `ctx.subprocess` + 真实 npm）** | 装出 `@deepseek-ai/dsh@0.2.0-rc.2`，并校验 `dsh --version` → `0.2.0-rc.2` |
 | **`dsh_harness_download`（真实 fetch）** | 24 265 字节，sha512 与 registry `dist.integrity` 一致，校验通过 |
 | `dsh_plugin_search`（真实 npm 搜索接口） | 中文「语音输入」→ 命中真实语音插件；`sort="popular"` → 按上月下载量排序（dshmarket 596.6k、dsh-skills-manager 209.6k…）；全部候选都通过了 `dsh.bundle.patch` 校验 |
@@ -259,10 +259,52 @@ dsh-installer/
 └── README.md
 ```
 
-`LICENSE` 里的版权署名是 `dsh-installer contributors`，改成你自己的名字即可。
+`LICENSE` 里的版权署名是 `hellogitd`，改成你自己的名字即可。
+
+---
+
+## 9. 发布到 npm（让别人能搜到）
+
+只要不发布，别人就只能靠仓库地址或绝对路径安装：
+
+```text
+dsh_plugin_install { "spec": "github:hellogitd/dsh_harness_install" }
+```
+
+`dsh_plugin_search` 查的是 **registry**，所以想被搜到就必须发布到 npm。
+
+### 被搜到的硬条件
+
+1. **包名不能是 `@local/*`**：那不是一个你能发布的 scope，`npm publish` 会 403。
+   本包已改成 `@hellogitd/dsh-installer`（与 GitHub/npm 账号一致）。
+2. **不能有 `"private": true`**：npm 会直接拒绝发布。本包已移除，
+   并加了 `"publishConfig": { "access": "public" }`（scoped 包默认 restricted）。
+3. **keywords 必须带 `dsh-plugin` 或 `deepseek-harness`**：本插件的搜索正是用
+   `keywords:dsh-plugin` / `keywords:deepseek-harness` 两个面把 DSH 插件从 npm 的
+   海量包里圈出来的。两个都写，曝光翻倍。
+4. `description` 会被 npm 搜索和本插件的列表一起展示，写清楚"干什么用的"。
+
+### 发布命令
+
+```bash
+npm login                                   # 本机若未登录；密码只有你能输
+npm publish --access public --registry=https://registry.npmjs.org
+```
+
+> 注意 `--registry`：如果本机 `npm config get registry` 指向镜像（例如
+> `registry.npmmirror.com`），那是**只读镜像**，发布必须显式指向官方源。
+
+### 发布后
+
+- npm 搜索索引**不是实时的**，刚发布要等一会儿才会出现在 `dsh_plugin_search` 里。
+- 验证：`dsh_plugin_search { "query": "安装器" }` 或直接
+  `dsh_plugin_install { "spec": "@hellogitd/dsh-installer" }`。
+- 之后升级：改 `version` → `npm publish` → 用户用
+  `dsh_plugin_install { "spec": "@hellogitd/dsh-installer@<新版本>" }` 更新
+  （替换已装包后需要重启才能加载新的 JS 模块代）。
 
 ---
 
 ## License
 
-MIT © 2026 dsh-installer contributors — 见 [LICENSE](./LICENSE)。
+MIT © 2026 hellogitd — 见 [LICENSE](./LICENSE)。

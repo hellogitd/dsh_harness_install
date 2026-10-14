@@ -1,5 +1,5 @@
 /**
- * @local/dsh-installer 功能测试。
+ * @hellogitd/dsh-installer 功能测试。
  *
  * 用「真实 node child_process + 真实 npm + 真实 npm registry」替换 DSH 的
  * ctx.subprocess / ctx.pluginManager（按已核对的 provider 契约实现），
@@ -139,12 +139,12 @@ const pluginManager = {
   async listBundles () {
     return [
       { name: '@deepseek-ai/dsh-base', version: '0.2.0-rc.2', enabled: true, installed: true, optional: false, removable: false, rows: [{}, {}], overrides: [] },
-      { name: '@local/dsh-installer', version: '1.0.0', enabled: true, installed: true, optional: false, removable: true, rows: [{}], overrides: [] }
+      { name: '@hellogitd/dsh-installer', version: '1.0.0', enabled: true, installed: true, optional: false, removable: true, rows: [{}], overrides: [] }
     ]
   },
   async listPlugins () {
     return [
-      { entryId: 'dsh-installer', moduleName: '@local/dsh-installer', enabled: true, fiberPhase: 'active' },
+      { entryId: 'dsh-installer', moduleName: '@hellogitd/dsh-installer', enabled: true, fiberPhase: 'active' },
       { entryId: 'tool-plugin-manager', moduleName: '@deepseek-ai/dsh-plugin-manager', enabled: false, fiberPhase: null }
     ]
   },
@@ -341,11 +341,11 @@ console.log('\n[6] dsh_plugin_manage：list / set_enabled / remove')
   console.log(list.summary.split('\n').map((line) => `    ${line}`).join('\n'))
   check(list.ok === true && list.bundles.length === 2 && list.plugins.length === 2, 'list 返回组合包与插件条目')
 
-  const bundleToggle = await tool('dsh_plugin_manage').execute({ action: 'set_enabled', name: '@local/dsh-installer', enabled: false }, exec())
+  const bundleToggle = await tool('dsh_plugin_manage').execute({ action: 'set_enabled', name: '@hellogitd/dsh-installer', enabled: false }, exec())
   check(bundleToggle.ok === true && bundleToggle.application === 'applied', 'set_enabled 切换组合包')
   const entryToggle = await tool('dsh_plugin_manage').execute({ action: 'set_enabled', entryId: 'tool-plugin-manager', enabled: true }, exec())
   check(entryToggle.application === 'restart-required' && entryToggle.summary.includes('重启'), '启动型 profile 提示重启')
-  const removed = await tool('dsh_plugin_manage').execute({ action: 'remove', name: '@local/dsh-installer' }, exec())
+  const removed = await tool('dsh_plugin_manage').execute({ action: 'remove', name: '@hellogitd/dsh-installer' }, exec())
   check(removed.ok === true && removed.application === 'applied', 'remove 卸载组合包')
 
   for (const [args, label] of [

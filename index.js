@@ -1,6 +1,6 @@
 /**
- * @local/dsh-installer — 下载/安装 DeepSeek Harness CLI（`@deepseek-ai/dsh`），
- * 并在当前 DSH profile 中安装、查看、启停与卸载插件组合包（bundle）。
+ * @hellogitd/dsh-installer — 下载/安装 DeepSeek Harness CLI（`@deepseek-ai/dsh`），
+ * 搜索可安装的插件，并在当前 DSH profile 中安装、查看、启停与卸载插件组合包（bundle）。
  *
  * 设计约束（都来自对当前 DSH 运行时的实测，改动前请先读 README「实现说明」）：
  * 1. 零依赖：只使用 Node 内置模块，不 import 任何 `@deepseek-ai/*` 包。tool 定义

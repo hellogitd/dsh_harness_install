@@ -1,4 +1,4 @@
-# @local/dsh-installer 的 profile 补丁层：把安装器工具插入当前 profile。
+# @hellogitd/dsh-installer 的 profile 补丁层：把安装器工具插入当前 profile。
 #
 # 下面的 config 全部是可选项，删掉任何一行都会回退到代码里的默认值：
 #   manager            使用的包管理器：npm | pnpm（默认 npm）
@@ -17,7 +17,7 @@
 
 - insert:
     - id: dsh-installer
-      name: '@local/dsh-installer'
+      name: '@hellogitd/dsh-installer'
       config:
         manager: npm
         registry: null

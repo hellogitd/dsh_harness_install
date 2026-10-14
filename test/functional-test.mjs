@@ -372,8 +372,53 @@ console.log('\n[7] 真实 curl 级下载：bad integrity 必须拒绝并落盘�
   check(!existsSync(join(outDir, 'dsh-0.2.0-rc.2.tgz')), '校验失败时不写入文件')
 }
 
+console.log('\n[8] dsh_plugin_search：真实访问 npm 搜索接口')
+{
+  const result = await tool('dsh_plugin_search').execute({ query: '语音输入', limit: 5 }, exec())
+  console.log(result.summary.split('\n').slice(0, 14).map((line) => `    ${line}`).join('\n'))
+  check(result.ok === true && result.results.length > 0, '中文功能描述能搜到候选')
+  check(result.results.every((item) => item.bundle === true), '默认只返回声明了 dsh.bundle.patch 的组合包')
+  check(result.results.every((item) => typeof item.spec === 'string' && item.spec.startsWith(item.name)), '每个候选都带可直接安装的 spec')
+  check(result.results.every((item) => item.index >= 1 && item.index <= result.results.length), '候选带 1 起连续编号')
+  check(result.summary.includes('fromSearch'), '结果里告诉模型用 fromSearch 按编号安装')
+
+  const popular = await tool('dsh_plugin_search').execute({ sort: 'popular', limit: 5 }, exec())
+  console.log(popular.summary.split('\n').slice(0, 10).map((line) => `    ${line}`).join('\n'))
+  const counts = popular.results.map((item) => item.downloads).filter((value) => typeof value === 'number')
+  check(popular.ok === true && popular.results.length > 0, '不给关键词时列出最火的插件')
+  check(counts.length === popular.results.length, '每个候选都带回上月下载量')
+  check(counts.every((value, index) => index === 0 || counts[index - 1] >= value), 'popular 按下载量降序')
+  check(popular.summary.includes('最火'), '摘要说明了这是"最火"榜')
+
+  const english = await tool('dsh_plugin_search').execute({ query: 'archive sessions', limit: 3 }, exec())
+  check(english.ok === true && english.results.length > 0, '英文功能描述也能搜到')
+}
+
+console.log('\n[9] 按编号安装（fromSearch）')
+{
+  const search = await tool('dsh_plugin_search').execute({ query: '余额', limit: 3 }, exec())
+  const pick = search.results[1]
+  const result = await tool('dsh_plugin_install').execute({ fromSearch: 2, preflight: false }, exec())
+  console.log(result.summary.split('\n').map((line) => `    ${line}`).join('\n'))
+  check(result.ok === true, '按编号安装成功')
+  check(result.summary.includes(pick.spec), `装的就是第 2 个（${pick.spec}）`)
+  const install = pluginCalls.findLast((call) => call.method === 'installBundle')
+  check(install?.spec === pick.spec, 'installBundle 收到的 spec 与列表里的一致')
+
+  for (const [args, label] of [
+    [{ fromSearch: 999, preflight: false }, '编号越界时报错'],
+    [{ spec: 'x', fromSearch: 1 }, 'spec 与 fromSearch 同时给时报错'],
+    [{}, '两者都不给时报错']
+  ]) {
+    let threw = null
+    try { await tool('dsh_plugin_install').execute(args, exec()) } catch (error) { threw = error }
+    check(threw !== null, label)
+    if (threw) console.log(`    → ${threw.message}`)
+  }
+}
+
 if (runInstallE2E) {
-  console.log('\n[8] dsh_harness_install：真实 npm 项目内安装 + dsh --version 校验')
+  console.log('\n[10] dsh_harness_install：真实 npm 项目内安装 + dsh --version 校验')
   const dir = join(ROOT, 'dsh-project')
   await rm(dir, { recursive: true, force: true })
   await mkdir(dir, { recursive: true })

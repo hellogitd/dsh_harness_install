@@ -1,6 +1,6 @@
 {
   "meta": {
     "title": "DeepSeek Harness Installer",
-    "description": "Download and install the dsh CLI from an npm registry, then install, inspect, toggle, and remove plugin bundles in this profile."
+    "description": "Download and install the dsh CLI from an npm registry, search installable plugins by what they do (or list the most popular ones), then install, inspect, toggle, and remove plugin bundles in this profile."
   }
 }

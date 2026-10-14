@@ -2,7 +2,7 @@
   "name": "@local/dsh-installer",
   "version": "1.0.0",
   "private": true,
-  "description": "下载/安装 DeepSeek Harness CLI（@deepseek-ai/dsh），并在当前 profile 中安装与管理插件组合包",
+  "description": "下载/安装 DeepSeek Harness CLI（@deepseek-ai/dsh），并按功能搜索、安装与管理当前 profile 的插件组合包",
   "license": "MIT",
   "author": "dsh-installer contributors",
   "type": "module",
@@ -10,7 +10,7 @@
   "main": "index.js",
   "meta": {
     "title": "DeepSeek Harness 安装器",
-    "description": "从 npm registry 下载并安装 dsh CLI，并在当前 profile 里安装、查看、启停与卸载插件组合包。"
+    "description": "从 npm registry 下载并安装 dsh CLI；按功能描述搜索可安装的插件（或看最火的一批），并安装、查看、启停与卸载插件组合包。"
   },
   "exports": {
     ".": "./index.js",

@@ -1,6 +1,6 @@
 {
   "meta": {
     "title": "DeepSeek Harness 安装器",
-    "description": "从 npm registry 下载并安装 dsh 命令行，并在当前 profile 中安装、查看、启停与卸载插件组合包。"
+    "description": "从 npm registry 下载并安装 dsh 命令行；按功能描述搜索可安装的插件（或看最火的一批），并安装、查看、启停与卸载插件组合包。"
   }
 }

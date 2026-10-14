@@ -49,6 +49,19 @@ const DEFAULT_MAX_TARBALL_BYTES = 128 * 1024 * 1024
 const SAFE_SPEC = /^[@a-zA-Z0-9][a-zA-Z0-9@/._~:+-]*$/
 /** 版本 / dist-tag 允许的字符集。 */
 const SAFE_VERSION = /^[a-zA-Z0-9][a-zA-Z0-9._+-]*$/
+/** 所有 registry 请求共用的 UA。 */
+const USER_AGENT = 'dsh-installer (+https://github.com/hellogitd/dsh_harness_install)'
+/**
+ * 用来把「DSH 插件」从 npm 的海量包里圈出来的关键词面。
+ * 两个都查再合并，召回更全；实测中英文功能词（"余额看板" / "voice input"）都能搜准。
+ */
+const SEARCH_FACETS = ['keywords:dsh-plugin', 'keywords:deepseek-harness']
+/** npm 官方下载量接口 —— 「最火」的客观依据（只对 npm 官方源有意义）。 */
+const DOWNLOADS_API = 'https://api.npmjs.org/downloads/point/last-month/'
+/** 搜索时并发请求 registry 的个数上限，别把人家打爆。 */
+const SEARCH_POOL = 8
+/** 候选池硬上限：再多也不会去看 manifest。 */
+const SEARCH_CANDIDATE_CAP = 30
 
 /* ------------------------------------------------------------------ *
  * 配置
@@ -389,7 +402,7 @@ async function fetchManifest (registries, version, signal, timeoutMs) {
       const response = await fetch(url, {
         headers: {
           accept: 'application/vnd.npm.install-v1+json, application/json',
-          'user-agent': 'dsh-installer (+https://github.com/deepseek-ai/deepseek-harness)'
+          'user-agent': USER_AGENT
         },
         signal: budget
       })
@@ -882,7 +895,7 @@ function harnessDownloadTool (ctx, settings) {
  * 工具 3：安装 profile 插件
  * ------------------------------------------------------------------ */
 
-function pluginInstallTool (ctx, settings) {
+function pluginInstallTool (ctx, settings, selections) {
   return {
     name: 'dsh_plugin_install',
     description:
@@ -895,13 +908,13 @@ function pluginInstallTool (ctx, settings) {
       type: 'object',
       additionalProperties: false,
       properties: {
-        spec: { type: 'string', description: '包 spec：registry 包名（可带 @version）、绝对路径、git 地址或 tarball 路径/URL。' },
+        spec: { type: 'string', description: '包 spec：registry 包名（可带 @version）、绝对路径、git 地址或 tarball 路径/URL。与 fromSearch 二选一。' },
+        fromSearch: { type: 'integer', description: 'dsh_plugin_search 最近一次结果里的编号（1 起），用户说"装第 N 个"时用它。与 spec 二选一。' },
         registry: { type: 'string', description: '首选 registry URL；缺省用 profile 配置的源与备选源。' },
         enabled: { type: 'boolean', description: '安装后是否立即选入组合包层，默认 true。' },
         preflight: { type: 'boolean', description: '安装前是否做 inspect 预检，默认 true。' },
         approvedBuilds: { type: 'array', items: { type: 'string' }, description: '仅当用户在对话中明确批准了这些依赖构建脚本时才传；名字来自上一次失败的 pendingBuilds。' }
-      },
-      required: ['spec']
+      }
     },
     output: {
       schema: outputEnvelope({
@@ -917,15 +930,26 @@ function pluginInstallTool (ctx, settings) {
     },
     presentCall: (args) => ({
       card: 'generic',
-      title: `安装插件 ${args?.spec ?? ''}`,
+      title: args?.spec ? `安装插件 ${args.spec}` : `安装搜索结果的第 ${args?.fromSearch ?? '?'} 个`,
       kind: 'other',
-      rawInput: { spec: args?.spec, registry: args?.registry ?? null }
+      rawInput: { spec: args?.spec ?? null, fromSearch: args?.fromSearch ?? null, registry: args?.registry ?? null }
     }),
     async execute (args, exec) {
-      const spec = requireString(args, 'spec')
+      const notes = []
+      let spec
+      if (args.fromSearch !== undefined) {
+        if (typeof args.spec === 'string' && args.spec.trim().length > 0) throw new Error('spec 与 fromSearch 只能给一个')
+        const picked = resolveSelection(selections, exec, args.fromSearch)
+        spec = picked.spec
+        notes.push(`来自 dsh_plugin_search 的第 ${args.fromSearch} 个：${picked.spec}`)
+      } else {
+        if (typeof args.spec !== 'string' || args.spec.trim().length === 0) {
+          throw new Error('缺少必填参数 spec（也可以用 fromSearch 指定 dsh_plugin_search 结果里的编号）')
+        }
+        spec = args.spec.trim()
+      }
       const registry = args.registry ? assertRegistry(args.registry) : null
       const pluginManager = requirePluginManager(ctx)
-      const notes = []
 
       if (args.preflight !== false) {
         try {
@@ -989,7 +1013,322 @@ function pluginInstallTool (ctx, settings) {
 }
 
 /* ------------------------------------------------------------------ *
- * 工具 4：查看 / 启停 / 卸载 profile 插件
+ * 工具 4：搜索插件（用户描述功能 → 候选列表 → 用户挑一个再装）
+ * ------------------------------------------------------------------ */
+
+/**
+ * 打一次 npm 全文搜索接口，返回原始 objects。
+ * @param registry - 目标 registry。
+ * @param text - npm 搜索语法，例如 `keywords:dsh-plugin 余额`。
+ */
+async function searchRegistry (registry, text, size, timeoutMs, signal) {
+  const params = new URLSearchParams({ text, size: String(size) })
+  const url = `${registryBase(registry)}-/v1/search?${params.toString()}`
+  const budget = signal ? AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)]) : AbortSignal.timeout(timeoutMs)
+  const response = await fetch(url, { headers: { accept: 'application/json', 'user-agent': USER_AGENT }, signal: budget })
+  if (!response.ok) throw new Error(`HTTP ${response.status}`)
+  const payload = await response.json()
+  return Array.isArray(payload?.objects) ? payload.objects : []
+}
+
+/**
+ * 读一个候选包的 latest manifest，判断它到底能不能当 DSH 插件装。
+ *
+ * 这是整套搜索的质量闸门：只有 package.json 里声明了 `dsh.bundle.patch` 的包
+ * 才会向 profile 贡献插件行，npm 上大量 `@deepseek-ai/*` 内部库都没有这个字段。
+ * 注意必须用完整 manifest（缩写版 install-v1+json 会丢掉 `dsh` 这类自定义字段）。
+ */
+async function fetchBundleMeta (registry, name, timeoutMs, signal) {
+  const url = `${registryBase(registry)}${name.replace('/', '%2F')}/latest`
+  const budget = signal ? AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)]) : AbortSignal.timeout(timeoutMs)
+  const response = await fetch(url, { headers: { accept: 'application/json', 'user-agent': USER_AGENT }, signal: budget })
+  if (!response.ok) return null
+  const manifest = await response.json()
+  if (!manifest || typeof manifest !== 'object') return null
+  const patch = manifest.dsh?.bundle?.patch
+  return {
+    name: typeof manifest.name === 'string' ? manifest.name : name,
+    version: typeof manifest.version === 'string' ? manifest.version : null,
+    description: typeof manifest.description === 'string' ? manifest.description : '',
+    license: typeof manifest.license === 'string' ? manifest.license : null,
+    bundle: typeof patch === 'string' && patch.length > 0
+  }
+}
+
+/** 取上月下载量；失败一律返回 null（下载量只是加分项，不该拖垮搜索）。 */
+async function fetchDownloads (name, timeoutMs, signal) {
+  try {
+    const budget = signal ? AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)]) : AbortSignal.timeout(timeoutMs)
+    const response = await fetch(`${DOWNLOADS_API}${name.replace('/', '%2F')}`, {
+      headers: { accept: 'application/json', 'user-agent': USER_AGENT },
+      signal: budget
+    })
+    if (!response.ok) return null
+    const payload = await response.json()
+    return typeof payload?.downloads === 'number' ? payload.downloads : null
+  } catch {
+    return null
+  }
+}
+
+/** 有界并发地跑一个异步映射。 */
+async function mapPool (items, limit, mapper) {
+  const results = new Array(items.length)
+  let cursor = 0
+  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (true) {
+      const index = cursor++
+      if (index >= items.length) return
+      results[index] = await mapper(items[index], index)
+    }
+  })
+  await Promise.all(workers)
+  return results
+}
+
+/** 下载量的短格式。 */
+function formatCount (value) {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return '?'
+  if (value >= 1000000) return `${(value / 1000000).toFixed(1)}M`
+  if (value >= 1000) return `${(value / 1000).toFixed(1)}k`
+  return String(value)
+}
+
+/** 「装第 N 个」用的会话键：有 agent 就按会话，没有就落到一个共享槽。 */
+function selectionKey (exec) {
+  return typeof exec?.agent?.id === 'string' ? exec.agent.id : '__no-agent__'
+}
+
+/** 记住某个会话最近一次搜索结果（进程内内存，重启即清空）。 */
+function rememberSelection (selections, exec, record) {
+  const key = selectionKey(exec)
+  selections.delete(key)
+  selections.set(key, record)
+  while (selections.size > 20) {
+    const oldest = selections.keys().next().value
+    if (oldest === key) break
+    selections.delete(oldest)
+  }
+}
+
+/** 把「第 N 个」解析成具体候选；不成立时给出能照着改的错误。 */
+function resolveSelection (selections, exec, index) {
+  const record = selections.get(selectionKey(exec))
+  if (!record) {
+    throw new Error('这个会话还没有搜索过插件：先调用 dsh_plugin_search，再按编号安装')
+  }
+  if (!Number.isInteger(index) || index < 1 || index > record.items.length) {
+    throw new Error(`编号 ${index} 超出范围：最近一次搜索（${record.query}）只有 ${record.items.length} 个候选，可选 1..${record.items.length}`)
+  }
+  return record.items[index - 1]
+}
+
+function pluginSearchTool (ctx, settings, selections) {
+  return {
+    name: 'dsh_plugin_search',
+    description:
+      '在 npm registry 上搜索可安装的 DSH 插件。' +
+      '用户在对话里描述想要的功能（"我想装个能看余额的插件"、"有没有归档会话的"）时用它搜候选；' +
+      'sort="popular" 则列出当前最火的插件（按上月下载量）。' +
+      '只返回确实声明了 dsh.bundle.patch 的组合包，并附带包名@版本、一句话说明、上月下载量、是否已装。' +
+      '把编号列表原样展示给用户让用户挑，用户选定后用 dsh_plugin_install 的 fromSearch 参数按编号安装。',
+    timeoutMs: 180000,
+    parameters: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        query: { type: 'string', description: '功能描述或关键词，中英文都行（例如 "余额看板"、"语音输入"、"archive sessions"）。不给就是列最火的插件。' },
+        sort: { type: 'string', enum: ['relevance', 'popular', 'recent'], description: 'relevance 按相关度（默认）；popular 按上月下载量；recent 按最近发布。' },
+        limit: { type: 'integer', description: '返回多少个候选，默认 10，最大 30。' },
+        registry: { type: 'string', description: '在哪个 registry 搜索；默认用配置的源，不可达或没结果时自动换备选源。' },
+        onlyBundles: { type: 'boolean', description: '只返回确实声明了 dsh.bundle.patch 的包，默认 true。' }
+      }
+    },
+    output: {
+      schema: outputEnvelope({
+        query: { type: 'string' },
+        registry: { type: 'string' },
+        sort: { type: 'string' },
+        results: { type: 'array', items: { type: 'object', additionalProperties: true } }
+      }),
+      render: (args, value) => [{ type: 'text', text: value.summary }]
+    },
+    presentCall: (args) => ({
+      card: 'generic',
+      title: `搜索 DSH 插件：${args?.query ?? '最火的插件'}`,
+      kind: 'search',
+      rawInput: { query: args?.query ?? null, sort: args?.sort ?? 'relevance' }
+    }),
+    async execute (args, exec) {
+      const query = typeof args.query === 'string' ? args.query.trim() : ''
+      const sort = ['relevance', 'popular', 'recent'].includes(args.sort) ? args.sort : 'relevance'
+      const limit = Math.min(Math.max(Number.isInteger(args.limit) ? args.limit : 10, 1), 30)
+      const onlyBundles = args.onlyBundles !== false
+      const explicit = args.registry ? assertRegistry(args.registry) : null
+      const notes = []
+
+      // 1) 依次询问 registry：两个关键词面各搜一次再按分数合并
+      let registry = null
+      let objects = []
+      const problems = []
+      for (const candidate of registryOrder(settings, explicit)) {
+        try {
+          const merged = new Map()
+          for (const facet of SEARCH_FACETS) {
+            const text = query.length > 0 ? `${facet} ${query}` : facet
+            const found = await searchRegistry(candidate, text, Math.min(limit * 3, SEARCH_CANDIDATE_CAP), Math.min(settings.timeoutMs, 30000), exec.signal)
+            for (const object of found) {
+              const name = object?.package?.name
+              if (typeof name !== 'string') continue
+              const score = typeof object?.score?.final === 'number' ? object.score.final : 0
+              const previous = merged.get(name)
+              if (previous === undefined || score > previous.score) merged.set(name, { object, score })
+            }
+          }
+          if (merged.size > 0) {
+            registry = candidate
+            objects = [...merged.values()].sort((a, b) => b.score - a.score).map((entry) => entry.object)
+            break
+          }
+          problems.push(`${candidate} → 没有结果`)
+        } catch (error) {
+          problems.push(`${candidate} → ${error?.message ?? error}`)
+        }
+      }
+      if (registry === null) throw new Error(`所有 registry 都搜不到（${problems.join('；')}）`)
+
+      // 2) 读 manifest 过滤：没有 dsh.bundle.patch 的包装了也不会贡献插件行
+      const candidates = objects.slice(0, SEARCH_CANDIDATE_CAP)
+      const inspected = await mapPool(candidates, SEARCH_POOL, async (object) => {
+        try {
+          return { object, meta: await fetchBundleMeta(registry, object.package.name, Math.min(settings.timeoutMs, 20000), exec.signal) }
+        } catch {
+          return { object, meta: null }
+        }
+      })
+      const bundles = inspected.filter((entry) => entry.meta?.bundle === true)
+      const usable = onlyBundles ? bundles : inspected
+      if (onlyBundles && inspected.length > bundles.length) {
+        notes.push(`已滤掉 ${inspected.length - bundles.length} 个没有 dsh.bundle.patch 的包（它们装了也不会贡献插件行）`)
+      }
+
+      // 3) 排序 + 取前 limit 个
+      const described = usable.map((entry) => {
+        const pkg = entry.object.package
+        return {
+          name: pkg.name,
+          version: typeof pkg.version === 'string' ? pkg.version : (entry.meta?.version ?? ''),
+          description: String(pkg.description ?? entry.meta?.description ?? ''),
+          publishedAt: typeof pkg.date === 'string' ? pkg.date : null,
+          score: entry.score,
+          keywords: Array.isArray(pkg.keywords) ? pkg.keywords.filter((keyword) => typeof keyword === 'string') : [],
+          license: entry.meta?.license ?? null,
+          bundle: entry.meta?.bundle === true,
+          downloads: null
+        }
+      })
+      const loadDownloads = async (item) => {
+        item.downloads = await fetchDownloads(item.name, Math.min(settings.timeoutMs, 20000), exec.signal)
+        return item
+      }
+      if (sort === 'popular') {
+        await mapPool(described, SEARCH_POOL, loadDownloads)
+        described.sort((a, b) => (b.downloads ?? -1) - (a.downloads ?? -1) || b.score - a.score)
+      } else if (sort === 'recent') {
+        described.sort((a, b) => String(b.publishedAt ?? '').localeCompare(String(a.publishedAt ?? '')))
+      }
+      const top = described.slice(0, limit)
+      if (sort !== 'popular') await mapPool(top, SEARCH_POOL, loadDownloads)
+
+      // 4) 标记哪些已经在当前 profile 里
+      const installed = new Map()
+      const pluginManager = ctx.get('pluginManager')
+      if (pluginManager) {
+        try {
+          for (const bundle of (await pluginManager.listBundles()) ?? []) installed.set(bundle.name, bundle.enabled === true)
+        } catch (error) {
+          notes.push(`读取已装组合包失败，"已装"标记可能不准：${error?.message ?? error}`)
+        }
+      } else {
+        notes.push('当前 profile 没有 pluginManager，无法标记哪些已经装过')
+      }
+
+      const results = top.map((item, index) => withOptional({
+        index: index + 1,
+        name: item.name,
+        version: item.version,
+        spec: `${item.name}@${item.version}`,
+        description: item.description,
+        bundle: item.bundle,
+        keywords: item.keywords.slice(0, 8),
+        installed: installed.has(item.name),
+        enabled: installed.get(item.name) === true
+      }, {
+        publishedAt: item.publishedAt,
+        downloads: item.downloads,
+        license: item.license
+      }))
+
+      const label = query.length > 0 ? `「${query}」` : '（未给关键词）'
+      rememberSelection(selections, exec, {
+        at: Date.now(),
+        query: label,
+        registry,
+        items: results.map((item) => ({ name: item.name, version: item.version, spec: item.spec, description: item.description }))
+      })
+
+      if (results.length === 0) {
+        return {
+          ok: false,
+          summary: [
+            `没搜到${query.length > 0 ? `「${query}」相关的` : ''}可安装 DSH 插件（源：${registry}）。`,
+            '· 换个说法再搜一次（中英文都行，例如"余额"、"语音"、"归档"、"archive"）',
+            '· 或者用 onlyBundles=false 看看那些没有 bundle 声明的包',
+            ...notes.map((note) => `· ${note}`)
+          ].join('\n'),
+          query: label,
+          registry,
+          sort,
+          results: [],
+          notes
+        }
+      }
+
+      const lines = [query.length > 0
+        ? `搜索 ${label} → 找到 ${results.length} 个可安装的 DSH 插件（源：${registry}）`
+        : `当前最火的 ${results.length} 个 DSH 插件（按上月下载量，源：${registry}）`, '']
+      for (const item of results) {
+        const marks = [
+          typeof item.downloads === 'number' ? `上月下载 ${formatCount(item.downloads)}` : null,
+          item.license ?? '未声明 license',
+          item.installed ? (item.enabled ? '已装·启用中' : '已装·未启用') : null,
+          item.publishedAt ? item.publishedAt.slice(0, 10) : null
+        ].filter(Boolean)
+        lines.push(`${String(item.index).padStart(2)}. ${item.spec}`)
+        lines.push(`    ${(item.description || '(无描述)').slice(0, 140)}`)
+        lines.push(`    ${marks.join(' · ')}`)
+        if (item.keywords.length > 0) lines.push(`    关键词：${item.keywords.join(', ')}`)
+      }
+      lines.push('')
+      lines.push('把上面这份列表展示给用户，让用户挑。用户选定后，用 dsh_plugin_install 的 fromSearch=<编号> 安装。')
+      lines.push('注意：第三方插件在宿主进程内运行、不受工作区沙箱限制，装之前请确认来源可信。')
+      if (notes.length > 0) lines.push(...notes.map((note) => `· ${note}`))
+
+      return withOptional({
+        ok: true,
+        summary: lines.join('\n'),
+        query: label,
+        registry,
+        sort,
+        results,
+        notes
+      }, {})
+    }
+  }
+}
+
+/* ------------------------------------------------------------------ *
+ * 工具 5：查看 / 启停 / 卸载 profile 插件
  * ------------------------------------------------------------------ */
 
 function pluginManageTool (ctx, settings) {
@@ -1220,16 +1559,19 @@ function withOptional (base, optional) {
  * ------------------------------------------------------------------ */
 
 /**
- * 注册四个工具。Cordis 的 fiber 会自动回收 `ctx.tools.register()` 的返回值
+ * 注册五个工具。Cordis 的 fiber 会自动回收 `ctx.tools.register()` 的返回值
  * （与第一方 dsh-tool-todo 的写法一致），所以这里不再手工包 effect。
  * @param ctx - 插件上下文（`inject: ['tools']` 保证 `ctx.tools` 存在）。
  * @param config - cordis.patch.yml 中该行的 config。
  */
 export function apply (ctx, config) {
   const settings = normalizeSettings(ctx, config)
+  /** 每个会话最近一次搜索结果，供「装第 N 个」使用（进程内内存，重启即清空）。 */
+  const selections = new Map()
   ctx.tools.register(harnessInstallTool(ctx, settings))
   ctx.tools.register(harnessDownloadTool(ctx, settings))
-  ctx.tools.register(pluginInstallTool(ctx, settings))
+  ctx.tools.register(pluginSearchTool(ctx, settings, selections))
+  ctx.tools.register(pluginInstallTool(ctx, settings, selections))
   ctx.tools.register(pluginManageTool(ctx, settings))
-  ctx.logger?.info?.(`dsh-installer: 已注册 4 个工具（manager=${settings.manager}, defaultMode=${settings.defaultMode}）`)
+  ctx.logger?.info?.(`dsh-installer: 已注册 5 个工具（manager=${settings.manager}, defaultMode=${settings.defaultMode}）`)
 }

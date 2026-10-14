@@ -1,0 +1,28 @@
+# @local/dsh-installer 的 profile 补丁层：把安装器工具插入当前 profile。
+#
+# 下面的 config 全部是可选项，删掉任何一行都会回退到代码里的默认值：
+#   manager            使用的包管理器：npm | pnpm（默认 npm）
+#   registry           首选 npm registry URL；不写则用包管理器自身配置
+#   fallbackRegistries 首选源不可达时依次询问的镜像
+#   defaultMode        dsh_harness_install 的默认安装位置：global | project（默认 global）
+#   downloadDir        dsh_harness_download 的默认保存目录；不写则是 <cwd>/.dsh-downloads
+#   verify             安装后是否用 dsh --version 做真实校验（默认 true）
+#   timeoutMs          单次安装/下载的最长耗时，毫秒（默认 900000）
+#   outputBytes        单次子进程回传给模型的输出上限，字节（默认 32768）
+#   maxTarballBytes    单次下载体积上限，字节（默认 134217728）
+#
+# 想让 pnpm 与 npmmirror 生效，把下面两行改成：
+#   manager: pnpm
+#   registry: https://registry.npmmirror.com/
+
+- insert:
+    - id: dsh-installer
+      name: '@local/dsh-installer'
+      config:
+        manager: npm
+        registry: null
+        fallbackRegistries:
+          - https://registry.npmmirror.com/
+        defaultMode: global
+        verify: true
+        timeoutMs: 900000

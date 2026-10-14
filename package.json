@@ -1,0 +1,49 @@
+{
+  "name": "@local/dsh-installer",
+  "version": "1.0.0",
+  "private": true,
+  "description": "下载/安装 DeepSeek Harness CLI（@deepseek-ai/dsh），并在当前 profile 中安装与管理插件组合包",
+  "license": "MIT",
+  "author": "dsh-installer contributors",
+  "type": "module",
+  "icon": "./icon.svg",
+  "main": "index.js",
+  "meta": {
+    "title": "DeepSeek Harness 安装器",
+    "description": "从 npm registry 下载并安装 dsh CLI，并在当前 profile 里安装、查看、启停与卸载插件组合包。"
+  },
+  "exports": {
+    ".": "./index.js",
+    "./package.json": "./package.json",
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./locale/*.json": "./locale/*.json"
+  },
+  "files": [
+    "index.js",
+    "cordis.patch.yml",
+    "locale/*.json",
+    "icon.svg",
+    "test/*.mjs",
+    "LICENSE",
+    "README.md"
+  ],
+  "scripts": {
+    "test": "node test/functional-test.mjs",
+    "test:e2e": "node test/functional-test.mjs --install-e2e"
+  },
+  "keywords": [
+    "dsh",
+    "deepseek-harness",
+    "cordis",
+    "plugin",
+    "installer"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  }
+}

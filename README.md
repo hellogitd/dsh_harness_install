@@ -7,6 +7,7 @@
 因此安装它本身不需要额外下载任何东西。
 
 - 许可证：[MIT](./LICENSE)
+- 仓库：<https://github.com/hellogitd/dsh_harness_install>
 - 行 id：`dsh-installer`
 - 包名：`@local/dsh-installer`
 
@@ -36,8 +37,16 @@ dsh_plugin_manage     { "action": "set_enabled", "entryId": "time-context", "ena
 
 ## 2. 安装到 profile
 
+先把仓库克隆到本地任意目录：
+
+```bash
+git clone https://github.com/hellogitd/dsh_harness_install.git
+```
+
+再把这个目录的**绝对路径**交给 `plugin_manager`：
+
 ```text
-plugin_manager { "action": "install_bundle", "target": "C:\\Users\\aglobabear\\Downloads\\ht7\\dsh-installer" }
+plugin_manager { "action": "install_bundle", "target": "<克隆下来的绝对路径，例如 D:\\code\\dsh_harness_install>" }
 ```
 
 `target` 是**本目录的绝对路径**。安装后：
